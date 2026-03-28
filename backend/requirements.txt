@@ -1,0 +1,9 @@
+fastapi
+websockets
+uvicorn
+python-multipart
+faster-whisper
+sounddevice
+numpy
+soundfile
+requests
