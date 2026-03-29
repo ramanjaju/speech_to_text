@@ -7,3 +7,5 @@ sounddevice
 numpy
 soundfile
 requests
+noisereduce
+silero-vad
