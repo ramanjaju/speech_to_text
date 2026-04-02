@@ -1,8 +1,10 @@
 import asyncio
 import numpy as np
+import os
 import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import logging
 
 from stt.whisper_stt import WhisperSTT
@@ -23,9 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load models once at startup
-# Note: large-v3-turbo is very fast. 
-# For even less lag, 'distil-large-v3' or 'medium' could be used.
+# Load models (Back to the stable large-v3-turbo)
 stt = WhisperSTT(model_name="large-v3-turbo", device="cpu", compute_type="int8")
 translator = GemmaTranslator()
 
@@ -35,10 +35,9 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.info("WebSocket connection established.")
     
     audio_buffer = bytearray()
-    # 2.0 seconds gives enough room for VAD to detect pauses effectively
-    BUFFER_SECONDS = 2.0 
+    BUFFER_SECONDS = 5  # Back to 5 seconds for stability
     SAMPLE_RATE = 16000
-    target_lang = "Hindi" 
+    target_lang = "Hindi"
 
     try:
         while True:
@@ -50,47 +49,26 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 buffer_duration = len(audio_buffer) / (SAMPLE_RATE * 2) 
                 if buffer_duration >= BUFFER_SECONDS:
-                    # Convert buffer to numpy array
                     audio_np = np.frombuffer(audio_buffer, dtype=np.int16).astype(np.float32) / 32768.0
 
-                    # Transcribe
+                    # Simple transcription
                     transcription, lang = stt.transcribe_from_audio_np(audio_np, SAMPLE_RATE)
                     
-                    if transcription and len(transcription.strip()) > 1:
-                        logger.info(f"Detected [{lang}]: {transcription}")
-                        
-                        # Send transcription to frontend immediately
-                        await websocket.send_json({
-                            "type": "transcription", 
-                            "text": transcription, 
-                            "language": lang
-                        })
+                    if transcription:
+                        logger.info(f"Transcription: {transcription}")
+                        await websocket.send_json({"type": "transcription", "text": transcription, "language": lang})
 
-                        # Translate if needed
-                        # We translate if source language is different from target
-                        # OR if the user explicitly wants a translation.
-                        if lang.lower() != target_lang.lower():
-                            translation = translator.translate(transcription, lang, target_lang)
-                            if translation:
-                                await websocket.send_json({
-                                    "type": "translation", 
-                                    "text": translation
-                                })
-                        else:
-                            # Just echo for visual consistency if languages match
-                            await websocket.send_json({
-                                "type": "translation", 
-                                "text": transcription
-                            })
+                        # Simple translation (No streaming)
+                        translation = translator.translate(transcription, lang, target_lang)
+                        if translation:
+                            await websocket.send_json({"type": "translation", "text": translation})
 
-                    # Clear buffer for next chunk
                     audio_buffer.clear()
             
             elif "text" in message:
                 config = json.loads(message["text"])
                 if config.get("type") == "config":
                     target_lang = config.get("target_lang", "Hindi")
-                    logger.info(f"Target language changed to: {target_lang}")
 
     except WebSocketDisconnect:
         logger.info("WebSocket connection closed.")
@@ -99,9 +77,9 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         audio_buffer.clear()
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Backend is live and models are loaded.")
+# Serve Frontend
+frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
+app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn

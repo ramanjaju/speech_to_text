@@ -52,7 +52,14 @@ async function startRecording() {
                 if (transcriptionDiv.innerText === '...') transcriptionDiv.innerText = '';
                 transcriptionDiv.innerText += " " + data.text;
                 transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
+            } else if (data.type === 'translation_start') {
+                if (translationDiv.innerText === '...') translationDiv.innerText = '';
+                translationDiv.innerText += " "; // Add a space between phrases
+            } else if (data.type === 'translation_chunk') {
+                translationDiv.innerText += data.text;
+                translationDiv.scrollTop = translationDiv.scrollHeight;
             } else if (data.type === 'translation') {
+                // For non-streaming cases (like same-language echo)
                 if (translationDiv.innerText === '...') translationDiv.innerText = '';
                 translationDiv.innerText += " " + data.text;
                 translationDiv.scrollTop = translationDiv.scrollHeight;
