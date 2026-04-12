@@ -7,12 +7,26 @@ class GemmaTranslator:
         self.model_name = model_name
 
     def translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        prompt = f"Translate from {source_lang} to {target_lang}:\n{text}"
+        prompt = f"Translate the following text from {source_lang} to {target_lang}. Output ONLY the translation and nothing else. No explanations, no notes:\n\n{text}"
+        return self._generate(prompt, "You are a professional translator. Output only raw translated text.")
 
+    def chat(self, text: str) -> str:
+        """
+        Processes vocal input as a chat prompt and returns a concise response.
+        """
+        return self._generate(text, "You are a helpful AI assistant. The user is talking to you via voice. Keep your responses very brief (1-2 sentences) and conversational.")
+
+    def _generate(self, prompt: str, system_instruction: str) -> str:
         payload = {
             "model": self.model_name,
             "prompt": prompt,
-            "stream": False
+            "system": system_instruction,
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "num_ctx": 1024,
+                "num_predict": 150
+            }
         }
 
         try:
@@ -20,8 +34,8 @@ class GemmaTranslator:
             response.raise_for_status()
             return response.json()["response"].strip()
         except Exception as e:
-            print(f"Error during translation request: {e}")
-            return f"Translation error: {e}"
+            print(f"Error during LLM request: {e}")
+            return f"Error: {e}"
 
     def stream_translate(self, text: str, source_lang: str, target_lang: str):
         """

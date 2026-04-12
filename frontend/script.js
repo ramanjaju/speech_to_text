@@ -3,6 +3,7 @@ let audioContext;
 let scriptProcessor;
 let mediaStream;
 let targetLanguage = 'Hindi';
+let currentMode = 'translation';
 
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -11,6 +12,8 @@ const translationDiv = document.getElementById('translation');
 const statusContainer = document.getElementById('statusContainer');
 const statusText = document.getElementById('statusText');
 const targetLangSelect = document.getElementById('targetLang');
+const modeSelect = document.getElementById('modeSelect');
+const langGroup = document.getElementById('langGroup');
 const downloadBtn = document.getElementById('downloadBtn');
 
 const canvas = document.getElementById('visualizer');
@@ -21,11 +24,25 @@ function updateStatus(state, text) {
     statusText.innerText = text;
 }
 
+function sendConfig() {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ 
+            type: 'config', 
+            target_lang: targetLanguage,
+            mode: currentMode
+        }));
+    }
+}
+
+modeSelect.onchange = (e) => {
+    currentMode = e.target.value;
+    langGroup.style.display = (currentMode === 'chat') ? 'none' : 'flex';
+    sendConfig();
+};
+
 targetLangSelect.onchange = (e) => {
     targetLanguage = e.target.value;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'config', target_lang: targetLanguage }));
-    }
+    sendConfig();
 };
 
 async function startRecording() {
@@ -40,9 +57,7 @@ async function startRecording() {
             startBtn.disabled = true;
             stopBtn.disabled = false;
             
-            // Send initial config
-            socket.send(JSON.stringify({ type: 'config', target_lang: targetLanguage }));
-            
+            sendConfig();
             initAudio(stream);
         };
 
@@ -50,19 +65,20 @@ async function startRecording() {
             const data = JSON.parse(event.data);
             if (data.type === 'transcription') {
                 if (transcriptionDiv.innerText === '...') transcriptionDiv.innerText = '';
-                transcriptionDiv.innerText += " " + data.text;
+                transcriptionDiv.innerHTML += `<div style="margin-bottom: 8px; border-left: 2px solid #38bdf8; padding-left: 8px;">${data.text}</div>`;
                 transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
-            } else if (data.type === 'translation_start') {
+            } else if (data.type === 'translation' || data.type === 'chat_response') {
                 if (translationDiv.innerText === '...') translationDiv.innerText = '';
-                translationDiv.innerText += " "; // Add a space between phrases
-            } else if (data.type === 'translation_chunk') {
-                translationDiv.innerText += data.text;
+                
+                const isAI = data.type === 'chat_response';
+                const color = isAI ? '#818cf8' : '#22c55e';
+                
+                translationDiv.innerHTML += `<div style="margin-bottom: 8px; border-left: 2px solid ${color}; padding-left: 8px;">${data.text}</div>`;
                 translationDiv.scrollTop = translationDiv.scrollHeight;
-            } else if (data.type === 'translation') {
-                // For non-streaming cases (like same-language echo)
-                if (translationDiv.innerText === '...') translationDiv.innerText = '';
-                translationDiv.innerText += " " + data.text;
-                translationDiv.scrollTop = translationDiv.scrollHeight;
+
+                if (isAI) {
+                    speakText(data.text, 'English');
+                }
             }
         };
 
@@ -82,15 +98,14 @@ async function startRecording() {
     }
 }
 
+let isAISpeaking = false;
+
 function initAudio(stream) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
     const source = audioContext.createMediaStreamSource(stream);
     
-    // Create a processor that sends chunks of audio
-    // 4096 is the buffer size (~250ms at 16kHz)
     const processor = audioContext.createScriptProcessor(4096, 1, 1);
     
-    // For visualization
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     const bufferLength = analyser.frequencyBinCount;
@@ -98,14 +113,14 @@ function initAudio(stream) {
     source.connect(analyser);
 
     processor.onaudioprocess = (e) => {
+        if (isAISpeaking) return; // Prevent self-talk loop
+
         if (socket && socket.readyState === WebSocket.OPEN) {
             const inputData = e.inputBuffer.getChannelData(0);
-            // Convert float32 to int16 for the backend
             const int16Data = new Int16Array(inputData.length);
             for (let i = 0; i < inputData.length; i++) {
                 int16Data[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
             }
-            // Send as binary
             socket.send(int16Data.buffer);
         }
     };
@@ -184,16 +199,16 @@ function downloadSession() {
 
 const speakBtn = document.getElementById('speakBtn');
 
-function speakText() {
-    const text = translationDiv.innerText;
-    if (text === '...') return;
+function speakText(customText, customLang) {
+    let text = customText || translationDiv.innerText;
+    if (text === '...' || !text) return;
+
+    // REMOVE EMOJIS: Prevent narrator from saying "smiling face" etc.
+    text = text.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDC00-\uDFFF])/g, '');
     
-    // Cancel any existing speech
     window.speechSynthesis.cancel();
-    
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // Map human names to browser BCP 47 language codes
     const langMap = {
         'Hindi': 'hi-IN',
         'Spanish': 'es-ES',
@@ -203,9 +218,10 @@ function speakText() {
         'English': 'en-US'
     };
     
-    utterance.lang = langMap[targetLanguage] || 'en-US';
-    utterance.pitch = 1;
-    utterance.rate = 1;
+    utterance.lang = customLang ? (langMap[customLang] || 'en-US') : (langMap[targetLanguage] || 'en-US');
+    utterance.onstart = () => { isAISpeaking = true; };
+    utterance.onend = () => { isAISpeaking = false; };
+    utterance.onerror = () => { isAISpeaking = false; };
     
     window.speechSynthesis.speak(utterance);
 }
@@ -213,4 +229,4 @@ function speakText() {
 startBtn.onclick = startRecording;
 stopBtn.onclick = stopRecording;
 downloadBtn.onclick = downloadSession;
-speakBtn.onclick = speakText;
+speakBtn.onclick = () => speakText();

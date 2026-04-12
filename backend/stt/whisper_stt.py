@@ -23,15 +23,19 @@ class WhisperSTT:
 
     def transcribe_from_audio_np(self, audio: np.ndarray, sample_rate: int = 16000):
         """
-        Transcribe a 16kHz mono float32 audio chunk with Noise Suppression and VAD.
+        Transcribe audio with focus on the main voice using an amplitude threshold.
         """
-
         if audio is None or len(audio) == 0:
+            return "", None
+
+        # 1. Amplitude Threshold (Focus on main voice)
+        rms = np.sqrt(np.mean(audio**2))
+        if rms < 0.01:  # Threshold for filtering out background noise
             return "", None
 
         audio = audio.astype("float32")
 
-        # 1. Background Noise Suppression (Removes stationary noise like fans)
+        # 2. Background Noise Suppression
         try:
             # We use a non-stationary method if possible, or just simple suppression
             audio = nr.reduce_noise(y=audio, sr=sample_rate, stationary=True, prop_decrease=0.7)

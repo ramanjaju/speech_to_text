@@ -190,6 +190,13 @@
 
         <div class="config-bar">
             <div class="input-group">
+                <label>Mode:</label>
+                <select id="modeSelect">
+                    <option value="translation">Translator (STT + Translation)</option>
+                    <option value="chat">AI Chat (Vocal LLM)</option>
+                </select>
+            </div>
+            <div class="input-group" id="langGroup">
                 <label>Translate To:</label>
                 <select id="targetLang">
                     <option value="Hindi">Hindi</option>
